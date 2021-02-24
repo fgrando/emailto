@@ -1,0 +1,259 @@
+#!/usr/bin/python3
+import base64
+import argparse
+import logging
+import smtplib
+import mimetypes
+import os
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.audio import MIMEAudio
+from email.mime.multipart import MIMEMultipart
+from email import encoders
+import signal
+import json
+
+##########################################################
+#
+#
+# YOUR CONFIGURATIONS ARE SAVED IN THIS FILE:
+CONFIGFILE = os.path.join(os.path.expanduser('~'), '.emailto')
+#
+#
+##########################################################
+
+
+
+class EmailTo():
+    """Simple client to send emails.
+
+    Args:
+        smtp_host (str): SMTP host ('smtp.gmail.com').
+        smtp_port (int): SMTP host port (465).
+        username (str): Client email ('yoremail@gmail.com'). This is also the sender.
+        password (str): Your password ('Password123')
+        log (logging, optional): Logging facility send logs (like logging.getLogger()).
+    """
+
+
+    def __init__(self, smtp_host, smtp_port, username, password, log=None):
+        self.smtp_host = smtp_host
+        self.smtp_port = smtp_port
+        self.username = username
+        self.password = password
+
+        self.log = logging.getLogger()
+        if log != None:
+            self.log = log
+
+
+    def send(self, recipients, subject, body, attachments = []):
+        """Send an email. Login is done with SMTP SSL.
+
+        Args:
+            recipients (list): List of emails to receive this message.
+            subject (str): The email subject.
+            body (str): The email text (body).
+            atttachments (list, optional): List of files to be attached.
+
+        Returns:
+            True if successful, otherwise False.
+        """
+        result = True
+
+        try:
+            self.log.debug('creating client [{}] [{}] [{}]'.format(self.smtp_host, self.smtp_port, self.username))
+            server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port)
+            server.login(self.username, self.password)
+        except:
+            self.log.error("Login failed!")
+            return False
+
+        self.log.debug('building email from [{}] called [{}]'.format(self.username, subject))
+        msg = MIMEMultipart()
+        msg['Subject'] = subject
+        msg['From'] = self.username
+
+        self.log.debug('attaching body [{}]'.format(body))
+        txt = MIMEText(body)
+        msg.attach(txt)
+
+        try:
+            if len(attachments) > 0:
+                self.log.debug('loading attachments...')
+
+            for path in attachments:
+                self.log.debug('attaching [{}]'.format(path))
+                self.load_attachment(path, msg)
+
+        except:
+            self.log.error("Failed to load attachments")
+            return False
+
+        mail_ascii = msg.as_string() #.encode('ascii', 'ignore').decode('ascii')
+
+        self.log.debug('sending email...')
+        for dst in recipients:
+            sent = False # flag to control the result
+            msg['To'] = dst
+            try:
+                server.sendmail(self.username, dst, mail_ascii)
+                sent = True
+            except:
+                pass
+
+            if not sent:
+                self.log.error('sending failed to [{}]'.format(dst))
+            else:
+                self.log.debug('sending to [{}]'.format(dst))
+
+            resutl = result and sent #increment global result
+
+        server.quit()
+        if result:
+            self.log.debug('success')
+        else:
+            self.log.warning('finished with errors')
+
+        return result
+
+
+    def load_attachment(self, filepath, message):
+        """Load files as attachments. All files are
+        loaded with MIMEBase and encoded.
+
+        Args:
+            filepath (str): The file path.
+            message (MIMEMultipart): The email to attach the file.
+        """
+
+        msg = None
+        content_type, encoding = mimetypes.guess_type(filepath)
+        self.log.debug("{}: content [{}] encoding [{}]".format(\
+            filepath, content_type, encoding))
+
+        if content_type != None:
+            main_type, sub_type = content_type.split('/', 1)
+            self.log.debug("{}: type [{}] sub [{}]".format(\
+                filepath, main_type, sub_type))
+        else:
+            main_type = None
+            sub_type = None
+
+        fp = open(filepath, 'rb')
+        msg = MIMEBase(main_type, sub_type)
+        msg.set_payload(fp.read())
+        encoders.encode_base64(msg)
+        fp.close()
+
+        filename = os.path.basename(filepath)
+        self.log.debug('attachment filename [{}]'.format(filename))
+
+        msg.add_header('Content-Disposition', 'attachment', filename=filename)
+        message.attach(msg)
+
+
+
+
+
+# keywords used by configuration
+LOGIN='login'
+PASSWD='passwd'
+DEFAULT_DST='default_recipients'
+
+def gracefull_exit(signum, frame):
+    print("\n")
+    exit(-1)
+
+def check_cofigurations():
+    reconfigure = False
+    if  not os.path.exists(CONFIGFILE):
+        reconfigure = True
+    else:
+        try:
+        #if True:
+            # sanity check to avoid later exceptions if the user messed the config file
+            conf = json.load(open(CONFIGFILE, 'r'))
+            trash = conf[LOGIN] + conf[PASSWD] + conf[DEFAULT_DST]
+        except:
+            reconfigure = True
+            pass
+
+    if reconfigure:
+        conf = {}
+        print ("Configuration not valid!\nRunning first use configuration...\n")
+
+        login = input('Type the sender email address  (email@web.com): ')
+        conf[LOGIN] = login.strip()
+
+        password = input('Type the sender email password (the_P@$$W0rd1): ')
+        password = base64.b64encode(password.encode('ascii'))
+        conf[PASSWD] = password.decode('ascii')
+
+        recipients = input('Default email recipients used when not provided by command line ("email1@me.com,email2@web.com"): ')
+        conf[DEFAULT_DST] = recipients.strip()
+
+        print("\n{}".format(conf))
+        ok = input ("This configuration is going to be written at {}. Proceed? [N/y]:".format(CONFIGFILE))
+        if ('Y' == ok) or ('y' == ok):
+            out = open(CONFIGFILE, 'w')
+            json.dump(conf, out)
+            out.close()
+        else:
+            print("Aborted.")
+        exit(-2)
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGINT, gracefull_exit)
+
+    check_cofigurations()
+    conf = json.load(open(CONFIGFILE, 'r'))
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument('-s', '--subject', required=True,
+        help='Subject of the email')
+    ap.add_argument('-m', '--message', required=True,
+        help='Message of the email (content)')
+    if conf[DEFAULT_DST] != "":
+        ap.add_argument("-r", "--recipients", required=False, default=conf[DEFAULT_DST],
+            help='Comma separated list of email recipients: "email1@asdf.com,email2@asdf.com". Default recipients are used if this is not provided.')
+    else:
+        ap.add_argument("-r", "--recipients", required=True,
+            help='Comma separated list of email recipients: "email1@asdf.com,email2@asdf.com".')
+    ap.add_argument("-a", "--attachments", required=False,
+        help='Comma separated list of file paths to be attached like: "/home/user/msg.txt,/home/user/other.png"')
+    ap.add_argument("-v", "--verbose", required=False, action='count', default=0,
+        help='Verbose mode. Show debug messages about the process')
+    args = vars(ap.parse_args())
+
+    # Create a log so we can see get some output (not mandatory, but wise)
+    log = logging.getLogger("sender")
+    if args['verbose'] > 0:
+        log.setLevel(logging.DEBUG)
+    else:
+        log.setLevel(logging.WARNING)
+
+    ch = logging.StreamHandler()
+    ch.setFormatter(logging.Formatter('%(message)s'))
+    log.addHandler(ch)
+
+    # inform the user credentials
+    try:
+        emailpass = base64.b64decode(conf[PASSWD]).decode('ascii')
+    except:
+        print("Bad credentials, please erase the {} contents and configure it again".format(CONFIGFILE))
+        exit(-3)
+
+    sender = EmailTo("smtp.gmail.com", 465, conf[LOGIN], emailpass, log)
+
+    if args['attachments'] != None:
+        ret = sender.send(args['recipients'].split(','), args['subject'],  args['message'], args['attachments'].split(','))
+    else:
+        ret = sender.send(args['recipients'].split(','), args['subject'],  args['message'])
+
+    if ret:
+        exit(0)
+    else:
+        exit(-1)
+

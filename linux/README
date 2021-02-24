@@ -1,0 +1,2 @@
+deb packet built with:
+	debuild --no-tgz-check
