@@ -1,2 +1,9 @@
+1. sudo apt-get install devscripts dh-make
+
+2. run create-pkg.sh
+
+3. sudo dpkg --install emailto_2.0-1_all.deb
+   sudo apt remove emailto
+
 deb packet built with:
 	debuild --no-tgz-check

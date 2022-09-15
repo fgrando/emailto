@@ -14,7 +14,7 @@ rm -rf tree
 mkdir -p tree/usr/bin
 cp ../../emailto tree/usr/bin/
 
-echo './tree/* ./' > debian/.install
+echo './tree/* ./' > debian/emailto.install
 
 echo "Edit install"
 cat debian/emailto.install
